@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tetsuo-ganymede"
+version = "0.1.0"
+authors = [
+    { name="Bobsuo", email="70917637+bobtheitguy31337@users.noreply.github.com" },
+]
+description = "A Python SDK for the Jupiter Protocol API"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "httpx>=0.24.0",
+    "solders>=0.18.0",
+    "solana>=0.30.0",
+    "spl>=0.3.0",
+    "anchorpy>=0.18.0",
+    "construct>=2.10.0",
+    "typing-extensions>=4.5.0",
+    "pytest"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/tetsuo-ai/tetsuo-ganymede"
+"Bug Tracker" = "https://github.com/tetsuo-ai/tetsuo-ganymede/issues"

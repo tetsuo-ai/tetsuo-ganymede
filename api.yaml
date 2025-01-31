@@ -1,0 +1,806 @@
+#  OpenAPI Spec File as of 30/01/2025
+#  Pulled from https://github.com/jup-ag/space-station/blob/main/openapi/api.yaml
+
+openapi: '3.0.2'
+info:
+  title: Jupiter API
+  version: 1.0.0
+  description: |
+    The heart and soul of Jupiter lies in the Quote and Swap API.
+    - Refer to this API Reference documentation to learn about the parameters, types and descriptions.
+    - The API Reference also includes other products and tools built on top or for Swap, such as Limit Order, DCA, Price, Tokens, etc.
+
+    ### API Rate Limit
+    Since 1 December 2024, we have updated our API structure. Please refer to [API Usage](/docs/) for further details on usage and rate limits.
+
+    ### API Usage
+    - API Wrapper Typescript [@jup-ag/api](https://github.com/jup-ag/jupiter-quote-api-node)
+
+    ### Data Types To Note
+    - Public keys are base58 encoded strings
+    - Raw data such as Vec<u8\> are base64 encoded strings
+
+servers:
+  - url: https://api.jup.ag/
+
+tags:
+  - name: Swap
+    description: Endpoints related to Quote and Swap API
+  - name: Token
+    description: Endpoints related to Tokens
+  - name: Price
+    description: Endpoints related to Price
+paths:
+  /swap/v1/quote:
+    get:
+      tags:
+        - Swap
+      summary: quote
+      description: Retrieve a quote to be used in `POST /swap`.
+      parameters:
+        - $ref: '#/components/parameters/InputMintParameter'
+        - $ref: '#/components/parameters/OutputMintParameter'
+        - $ref: '#/components/parameters/AmountParameter'
+        - $ref: '#/components/parameters/SlippageParameter'
+        - $ref: '#/components/parameters/SwapModeParameter'
+        - $ref: '#/components/parameters/DexesParameter'
+        - $ref: '#/components/parameters/ExcludeDexesParameter'
+        - $ref: '#/components/parameters/RestrictIntermediateTokensParameter'
+        - $ref: '#/components/parameters/OnlyDirectRoutesParameter'
+        - $ref: '#/components/parameters/AsLegacyTransactionParameter'
+        - $ref: '#/components/parameters/PlatformFeeBpsParameter'
+        - $ref: '#/components/parameters/MaxAccountsParameter'
+      responses:
+        '200':
+          description: "Successful response\n- To be used in /swap"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+  /swap/v1/swap:
+    post:
+      tags:
+        - Swap
+      summary: swap
+      description: Returns a transaction that you can use from the quote you get from `/quote`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwapRequest'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwapResponse'
+  /swap/v1/swap-instructions:
+    post:
+      tags:
+        - Swap
+      summary: swap-instructions
+      description: Returns instructions that you can use from the quote you get from `/quote`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwapRequest'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwapInstructionsResponse'
+  /swap/v1/program-id-to-label:
+    get:
+      tags:
+        - Swap
+      summary: program-id-to-label
+      description: Returns a hash, which key is the program id and value is the label. This is used to help map error from transaction by identifying the fault program id. With that, we can use the `excludeDexes` or `dexes` parameter.
+      responses:
+        '200':
+          description: Default response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+  /tokens/v1/token/{mint_address}:
+    get:
+      tags:
+      - Token
+      summary: token information
+      description: Returns the specified mint addresse's token information and metadata
+      parameters:
+      - name: address
+        in: path
+        description: The token's mint address
+        required: true
+        schema:
+          type: string
+        example: So11111111111111111111111111111111111111112
+      responses:
+        '200':
+          description: More information about a particular token
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MintIncludingDuplicates"
+  /tokens/v1/market/{mareket_address}/mints:
+    get:
+      tags:
+      - Token
+      summary: mints in market
+      description: Returns the mints involved in a market
+      parameters:
+      - name: address
+        in: path
+        description: Market address
+        required: true
+        schema:
+          type: string
+        example: RhSZfkW5SwYxyFdrktQ9hV4ScR7by3rcTk1a5drFpZy
+      responses:
+        '200':
+          description: Returns the mints involved in a market
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/Mint"
+  /tokens/v1/mints/tradable:
+    get:
+      tags:
+      - Token
+      summary: tradable
+      description: Returns a list of all mints tradable via Jupiter routing
+      responses:
+        '200':
+          description: List of mints which are tradable
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+  /tokens/v1/tagged/{tag}:
+    get:
+      tags:
+      - Token
+      summary: tagged
+      description: Returns a list of mints with specified tag(s) along with their metadata
+      parameters:
+      - name: tag_list
+        in: path
+        description: A list of one or more tags, comma separated. The list is the
+          union of tokens with these tags.
+        required: true
+        schema:
+          type: string
+        example: strict,lst
+      responses:
+        '200':
+          description: The list of tokens with the tags given
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MintIncludingDuplicates"
+  /tokens/v1/new:
+    get:
+      tags:
+      - Token
+      summary: new
+      description: Returns new tokens with metadata, created at timestamp and markets
+      parameters:
+      - name: limit
+        in: query
+        description: how many records to output in the JSON
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        example: '10'
+      - name: offset
+        in: query
+        description: |-
+          the offset into the result set. Used in conjunction with
+          `limit` to page through the data. Defaults to 0
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        example: '20'
+      responses:
+        '200':
+          description: List of new tokens which are tradable with SOL
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/MintWithCreationTimeAndMarkets"
+  /tokens/v1/all:
+    get:
+      tags:
+      - Token
+      summary: all
+      description: Returns all tokens with all metadata
+      responses:
+        '200':
+          description: List of tokens which are tradable
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/Mint"
+  /price/v2/ids:
+    get:
+      tags:
+      - Price
+      summary: price
+      description: Returns prices of specified tokens
+      parameters:
+      - name: ids
+        in: query
+        description: "- The token mint address(es) to get price(s) on\n- Comma separate to pass in multiple"
+        required: true
+        schema:
+          type:
+          - string
+        example: 'So11111111111111111111111111111111111111112'
+      - name: vsToken
+        in: query
+        description: "- A token mint address to compare the prices against\n- By default, prices are denominated by USD\n- If parameter is used with SOL mint address, denominates in the price in SOL"
+        required: false
+        schema:
+          type:
+          - string
+      - name: showExtraInfo
+        in: query
+        description: "- Get more details such as\n  - Unix timestamp\n  - Buy price for Jupiter last swap and quote\n  - Sell price for Jupiter last swap and quote\n  - Confidence and depth information\n- Cannot use `vsToken` with this parameter"
+        required: false
+        schema:
+          type:
+            - string
+
+components:
+  schemas:
+    Instruction:
+      type: object
+      properties:
+        programId:
+          type: string
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountMeta'
+        data:
+          type: string
+      required:
+        - programId
+        - accounts
+        - data
+
+    AccountMeta:
+      type: object
+      properties:
+        pubkey:
+          type: string
+        isSigner:
+          type: boolean
+        isWritable:
+          type: boolean
+      required:
+        - pubkey
+        - isSigner
+        - isWritable
+
+    QuoteResponse:
+      type: object
+      required:
+        - inputMint
+        - outputMint
+        - inAmount
+        - outAmount
+        - otherAmountThreshold
+        - swapMode
+        - slippageBps
+        - priceImpactPct
+        - routePlan
+      properties:
+        inputMint:
+          type: string
+        inAmount:
+          type: string
+        outputMint:
+          type: string
+        outAmount:
+          type: string
+          description: "- Calculated output amount from routing algorithm\n- Exlcuding network fees, slippage or platform fees"
+        otherAmountThreshold:
+          type: string
+          description: "- Calculated minimum output amount after accounting for `slippageBps` and `platformFeeBps`\n- Not used by build transaction"
+        swapMode:
+          $ref: '#/components/schemas/SwapMode'
+          required: true
+        slippageBps:
+          type: integer
+          format: int32
+        platformFee:
+          $ref: '#/components/schemas/PlatformFee'
+        priceImpactPct:
+          type: string
+        routePlan:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoutePlanStep'
+        contextSlot:
+          type: number
+        timeTaken:
+          type: number
+          description: Time taken to determine quote
+
+    SwapMode:
+      type: string
+      enum:
+        - ExactIn
+        - ExactOut
+
+    PlatformFee:
+      type: object
+      properties:
+        amount:
+          type: string
+        feeBps:
+          type: integer
+          format: int32
+
+    RoutePlanStep:
+      type: object
+      properties:
+        swapInfo:
+          $ref: '#/components/schemas/SwapInfo'
+        percent:
+          type: integer
+          format: int32
+      required:
+        - swapInfo
+        - percent
+
+    SwapInfo:
+      type: object
+      required:
+        - ammKey
+        - inputMint
+        - outputMint
+        - inAmount
+        - outAmount
+        - feeAmount
+        - feeMint
+      properties:
+        ammKey:
+          type: string
+        label:
+          type: string
+        inputMint:
+          type: string
+        outputMint:
+          type: string
+        inAmount:
+          type: string
+        outAmount:
+          type: string
+        feeAmount:
+          type: string
+        feeMint:
+          type: string
+
+    SwapRequest:
+      type: object
+      required:
+        - userPublicKey
+        - quoteResponse
+      properties:
+        userPublicKey:
+          description: The user public key
+          type: string
+        wrapAndUnwrapSol:
+          description: "Default: true\n- To automatically wrap/unwrap SOL in the transaction\nIf false, it will use wSOL token account\n- Parameter be ignored if `destinationTokenAccount` is set because the `destinationTokenAccount` may belong to a different user that we have no authority to close."
+          type: boolean
+          default: true
+        useSharedAccounts:
+          description: "Default: true\n- This enables the usage of shared program accounts\n- If true, no intermediate token accounts or open orders accounts need to be created for user\n- If you are using `destinationTokenAccount`, you must set this to `true`. If this is not set, this will be set to `false` in the case that the route plan is just through one simple AMM that isn't Openbook or Serum. Otherwise, it will be set to `true`"
+          type: boolean
+          default: true
+        feeAccount:
+          description: "- The referral account's token account of specific mints depending on `SwapMode` to collect fees\n- See [Add Fees](/docs/swap-api/add-fees-to-swap) guide for more details"
+          type: string
+        trackingAccount:
+          description: "- Specify any public key that belongs to you to track the transactions\n- Useful for integrators to get all the swap transactions from this public key\n- Query the data using a block explorer like Solscan/SolanaFM or query like Dune/Flipside."
+          type: string
+        prioritizationFeeLamports:
+          description: "- To specify a level or amount of additional fees to prioritize the transaction\n- It can be used for both priority fee and jito tip"
+          type: integer
+          properties:
+            priorityLevelWithMaxLamports:
+              properties:
+                prorityLevel:
+                  description: Either `medium`, `high` or `veryHigh`
+                  type: string
+                maxLamports:
+                  description: Maximum lamports to cap the priority fee estimation, to prevent overpaying
+            jitoTipLamports:
+              properties:
+                jitoTipLamports:
+                  description: "- Exact amount of tip to use in a tip instruction\n- Estimate how much to set using Jito tip endpoint, [see their docs](https://docs.jito.wtf/)"
+                  type: integer
+            
+        asLegacyTransaction:
+          description: "Default: false\n- Request a legacy transaction rather than the default versioned transaction\n- Used together with `asLegacyTransaction` in /quote, otherwise the transaction might be too large"
+          type: boolean
+          default: false
+        useTokenLedger:
+          description: "Default: false\n- This is useful when the instruction before the swap has a transfer that increases the input token amount\n- Then, the swap will use the difference between the token ledger token amount and post token amount"
+          type: boolean
+          default: false
+        destinationTokenAccount:
+          description: "- Public key of a token account that will be used to receive the token out of the swap\n- If not provided, the signer's ATA will be used\n- If provided, we assume that the token account is already initialized"
+          type: string
+        dynamicComputeUnitLimit:
+          description: "Default: false\n- When enabled, it will do a swap simulation to get the compute unit used and set it in ComputeBudget's compute unit limit\n- This will increase latency slightly since there will be one extra RPC call to simulate this\n- This can be useful to estimate compute unit correctly and reduce priority fees needed or have higher chance to be included in a block"
+          type: boolean
+        skipUserAccountsRpcCalls:
+          description: "Default: false\n- When enabled, it will not do any additional RPC calls to check on user's accounts\n- Enable it only when you already setup all the accounts needed for the trasaction, like wrapping or unwrapping sol, or destination account is already created"
+          type: boolean
+        dynamicSlippage:
+          description: "Default: false\n- When enabled, it will use a set of categories and math to calculate a dynamic slippage threshold to use\n- See [dynamic slippage notes](/docs/swap-api/send-swap-transaction#how-jupiter-estimates-slippage)"
+          type: boolean
+        computeUnitPriceMicroLamports:
+          description: "- To specify a compute unit price to calculate priority fee\n- `computeUnitLimit (1400000) * computeUnitPriceMicroLamports`\n- If `auto` is used, Jupiter will automatically set a priority fee and it will be capped at 5,000,000 lamports / 0.005 SOL\n- We recommend using `prioritizationFeeLamports` and `dynamicComputeUnitLimit` instead of passing in a compute unit price"
+          type: integer
+        quoteResponse:
+          $ref: '#/components/schemas/QuoteResponse'
+
+    SwapResponse:
+      type: object
+      properties:
+        swapTransaction:
+          type: string
+        lastValidBlockHeight:
+          type: number
+        prioritizationFeeLamports:
+          type: number
+        dynamicSlippageReport:
+          type: object
+          properties:
+            slippageBps:
+              type: integer
+              format: int32
+            otherAmount:
+              type: integer
+              format: int32
+            simulatedIncurredSlippageBps:
+              type: integer
+              format: int32
+            amplificationRatio:
+              type: string
+
+      required:
+        - swapTransaction
+        - lastValidBlockHeight
+
+    SwapInstructionsResponse:
+      type: object
+      properties:
+        tokenLedgerInstruction:
+          description: If you are using `useTokenLedger = true`.
+          $ref: '#/components/schemas/Instruction'
+        otherInstructions:
+          description: "If you set `{\"prioritizationFeeLamports\": {\"jitoTipLamports\": 5000}}`, you will see a custom tip instruction to Jito here."
+          $ref: '#/components/schemas/Instruction'
+        computeBudgetInstructions:
+          description: The necessary instructions to setup the compute budget.
+          type: array
+          items:
+            $ref: '#/components/schemas/Instruction'
+        setupInstructions:
+          description: Setup missing ATA for the users.
+          type: array
+          items:
+            $ref: '#/components/schemas/Instruction'
+        swapInstruction:
+          description: The actual swap instruction.
+          $ref: '#/components/schemas/Instruction'
+        cleanupInstruction:
+          description: Unwrap the SOL if `wrapAndUnwrapSol = true`.
+          $ref: '#/components/schemas/Instruction'
+        addressLookupTableAddresses:
+          description: The lookup table addresses that you can use if you are using versioned transaction.
+          type: array
+          items:
+            type: string
+      required:
+        - computeBudgetInstructions
+        - otherInstructions
+        - setupInstructions
+        - swapInstruction
+        - addressLookupTableAddresses
+
+    IndexedRouteMapResponse:
+      type: object
+      required:
+        - mintKeys
+        - indexedRouteMap
+      properties:
+        mintKeys:
+          type: array
+          items:
+            type: string
+          description: All the mints that are indexed to match in indexedRouteMap
+        indexedRouteMap:
+          type: object
+          description: All the possible route and their corresponding output mints
+          additionalProperties:
+            type: array
+            items:
+              type: number
+          example:
+            '1':
+              - 2
+              - 3
+              - 4
+            '2':
+              - 1
+              - 3
+              - 4
+    Mint:
+      type: object
+      required:
+      - address
+      - name
+      - symbol
+      - decimals
+      - tags
+      - created_at
+      - extensions
+      properties:
+        address:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        daily_volume:
+          type:
+          - number
+          - 'null'
+          format: double
+        decimals:
+          type: integer
+          format: int32
+        extensions: {}
+        freeze_authority:
+          type:
+          - string
+          - 'null'
+        logoURI:
+          type:
+          - string
+          - 'null'
+        mint_authority:
+          type:
+          - string
+          - 'null'
+        minted_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        name:
+          type: string
+        permanent_delegate:
+          type:
+          - string
+          - 'null'
+        symbol:
+          type: string
+        tags:
+          type: array
+          items:
+            type:
+            - string
+            - 'null'
+    MintIncludingDuplicates:
+      type: object
+      required:
+      - address
+      - name
+      - symbol
+      - decimals
+      - tags
+      - created_at
+      - extensions
+      properties:
+        address:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        daily_volume:
+          type:
+          - number
+          - 'null'
+          format: double
+        decimals:
+          type: integer
+          format: int32
+        extensions: {}
+        freeze_authority:
+          type:
+          - string
+          - 'null'
+        logoURI:
+          type:
+          - string
+          - 'null'
+        mint_authority:
+          type:
+          - string
+          - 'null'
+        minted_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        name:
+          type: string
+        permanent_delegate:
+          type:
+          - string
+          - 'null'
+        symbol:
+          type: string
+        tags:
+          type: array
+          items:
+            type:
+            - string
+            - 'null'
+    MintWithCreationTimeAndMarkets:
+      type: object
+      required:
+      - mint
+      - created_at
+      - metadata_updated_at
+      - name
+      - symbol
+      - decimals
+      - known_markets
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        decimals:
+          type: integer
+          format: int32
+        freeze_authority:
+          type:
+          - string
+          - 'null'
+        known_markets:
+          type: array
+          items:
+            type: string
+        logo_uri:
+          type:
+          - string
+          - 'null'
+        metadata_updated_at:
+          type: string
+          format: date-time
+        mint:
+          type: string
+        mint_authority:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        symbol:
+          type: string
+
+
+  parameters:
+    InputMintParameter:
+      name: inputMint
+      description: Input token mint address
+      in: query
+      required: true
+      schema:
+        type: string
+    OutputMintParameter:
+      name: outputMint
+      description: Output token mint address
+      in: query
+      required: true
+      schema:
+        type: string
+    AmountParameter:
+      name: amount
+      description: "Atomic value to swap (Before applying decimals)\n- Input Amount if `SwapMode=ExactIn`\n- Output Amount if `SwapMode=ExactOut`"
+      in: query
+      required: true
+      schema:
+        type: integer
+    SlippageParameter:
+      name: slippageBps
+      description: "Default: 50\n- This is threshold denoted in basis points.\n- If the output amount exceeds the threshold, then the swap transaction will fail."
+      in: query
+      schema:
+        type: integer
+        default: 50
+    SwapModeParameter:
+      name: swapMode
+      description: "Default: ExactIn\n- ExactOut is for supporting use cases where you need an exact output amount, like [payments](../swap-api/payments-through-swap)\n- In this case the slippage is on the input token."
+      in: query
+      schema:
+        type: string
+        enum:
+          - ExactIn
+          - ExactOut
+    DexesParameter:
+      name: dexes
+      description: "Default: Include ALL DEXes\n- If a DEX is indicated, the route will **only use** that DEX\n- Multiple DEXes can be pass in by comma separating them\n- [Full list of DEXes here](https://api.jup.ag/swap/v1/program-id-to-label)"
+      in: query
+      schema:
+        type: array
+        items:
+          type: string
+    ExcludeDexesParameter:
+      name: excludeDexes
+      description: "Default: Exclude NONE of the DEXes\n- If a DEX is indicated, the route will **not use** that DEX\n- Multiple DEXes can be pass in by comma separating them\n- [Full list of DEXes here](https://api.jup.ag/swap/v1/program-id-to-label)"
+      in: query
+      schema:
+        type: array
+        items:
+          type: string
+    RestrictIntermediateTokensParameter:
+      name: restrictIntermediateTokens
+      description: "- Restrict intermediate tokens within a route to a set of more stable tokens\n- This will help to reduce exposure to potential high slippage routes"
+      in: query
+      schema:
+        type: boolean
+    OnlyDirectRoutesParameter:
+      name: onlyDirectRoutes
+      description: "Default: false\n- Limits the routeDirect Routes limits Jupiter routing to single hop routes only"
+      in: query
+      schema:
+        type: boolean
+    AsLegacyTransactionParameter:
+      name: asLegacyTransaction
+      description: "Default: false\n- Instead of using versioned transaction, this will use the legacy transaction"
+      in: query
+      schema:
+        type: boolean
+    MaxAccountsParameter:
+      name: maxAccounts
+      description: "- Rough estimate of the max accounts to be used for the quote\n- Useful if composing with your own accounts or to be more precise in resource accounting resulting in better routes\n- Jupiter Frontend uses a maxAccounts of 64"
+      in: query
+      schema:
+        type: integer
+    PlatformFeeBpsParameter:
+      name: platformFeeBps
+      description: "- Take fees in basis points from signer\n- Used together with `feeAccount` in /swap, see [Adding Fees](/docs/swap-api/add-fees-to-swap) guide"
+      in: query
+      schema:
+        type: integer
