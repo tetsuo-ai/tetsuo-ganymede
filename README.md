@@ -1,4 +1,3 @@
-```markdown
 # Tetsuo Ganymede - Jupiter Protocol Python SDK
 
 A Python SDK for interacting with Jupiter Protocol on Solana. This SDK provides a simple interface to Jupiter's swap aggregator, DCA (Dollar Cost Average) trading, and price data services.
