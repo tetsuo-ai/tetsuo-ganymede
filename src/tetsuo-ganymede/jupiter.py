@@ -1,22 +1,35 @@
-"""
-Jupiter Protocol Python SDK
-"""
-from typing import Dict, List, Any, Optional, Union
-
 import base64
 import json
 import time
 import struct
-import httpx
 
+import httpx
+from httpx._config import Timeout
+from typing import Dict, List, Any, Optional, Union
+
+from solders import message
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
-from solders.transaction import VersionedTransaction
+from solders.transaction import VersionedTransaction, Transaction
 from solders.system_program import transfer, TransferParams
+from solders.instruction import Instruction as TransactionInstruction
+from solders.instruction import Instruction, AccountMeta
+
 from solana.rpc.types import TxOpts
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
 
+from spl.token.instructions import create_associated_token_account, get_associated_token_address, sync_native, SyncNativeParams, close_account, CloseAccountParams
+from spl.token.constants import *
+
+from construct import Container
+from anchorpy.program.core import Program as AnchorProgram
+from anchorpy.program.core import Idl, Provider
+from anchorpy.provider import Wallet
+from anchorpy import Context
+from anchorpy import AccountsCoder
+import logging
+logger = logging.getLogger(__name__)
 
 class JupiterDCA:
     """Handles Jupiter's Dollar Cost Average (DCA) trading functionality.
@@ -70,8 +83,8 @@ class JupiterDCA:
             >>> dca = await jupiter.dca.create_dca(
             >>>     input_token="So11111111111111111111111111111111111111112",
             >>>     output_token="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            >>>     total_amount=10_000_000_000,  # 10 SOL in lamports
-            >>>     amount_per_cycle=1_000_000_000,  # 1 SOL per trade
+            >>>     total_amount=10000,  # 10 SOL in microlamports
+            >>>     amount_per_cycle=1000,  # 1 SOL per trade
             >>>     cycle_frequency=86400,  # 24 hours in seconds
             >>> )
         """
@@ -632,31 +645,30 @@ class JupiterDCA:
 class Jupiter():
     
     ENDPOINT_APIS_URL = {
-        "QUOTE": "https://quote-api.jup.ag/v6/quote?",
-        "SWAP": "https://quote-api.jup.ag/v6/swap",
-        "OPEN_ORDER": "https://jup.ag/api/limit/v1/createOrder",
-        "CANCEL_ORDERS": "https://jup.ag/api/limit/v1/cancelOrders",
-        "QUERY_OPEN_ORDERS": "https://jup.ag/api/limit/v1/openOrders?wallet=",
-        "QUERY_ORDER_HISTORY": "https://jup.ag/api/limit/v1/orderHistory",
-        "QUERY_TRADE_HISTORY": "https://jup.ag/api/limit/v1/tradeHistory",
-
-        # Token endpoints
-        "TOKEN": "https://token.jup.ag/v1/token",
+        "QUOTE": "https://api.jup.ag/swap/v1/quote?",
+        "SWAP": "https://api.jup.ag/swap/v1/swap",
+        "OPEN_ORDER": "https://api.jup.ag/limit/v2/createOrder",
+        "CANCEL_ORDERS": "https://api.jup.ag/limit/v2/cancelOrders",
+        "QUERY_OPEN_ORDERS": "https://api.jup.ag/limit/v2/openOrders?wallet=",
+        "QUERY_ORDER_HISTORY": "https://api.jup.ag/limit/v2/orderHistory",
+        "QUERY_TRADE_HISTORY": "https://api.jup.ag/limit/v2/tradeHistory",
+        "TOKEN": "https://api.jup.ag/tokens/v1/token",
         "MARKET_MINTS": "https://token.jup.ag/v1/market",
         "TOKENS": "https://token.jup.ag/v1/tokens",
+        "PRICE": "https://api.jup.ag/price/v2"
     }
     
     def __init__(
         self,
         async_client: AsyncClient,
         keypair: Keypair,
-        quote_api_url: str="https://quote-api.jup.ag/v6/quote?",
-        swap_api_url: str="https://quote-api.jup.ag/v6/swap",
-        open_order_api_url: str="https://jup.ag/api/limit/v1/createOrder",
-        cancel_orders_api_url: str="https://jup.ag/api/limit/v1/cancelOrders",
-        query_open_orders_api_url: str="https://jup.ag/api/limit/v1/openOrders?wallet=",
-        query_order_history_api_url: str="https://jup.ag/api/limit/v1/orderHistory",
-        query_trade_history_api_url: str="https://jup.ag/api/limit/v1/tradeHistory",
+        quote_api_url: str="https://api.jup.ag/swap/v1/quote?",
+        swap_api_url: str="https://api.jup.ag/swap/v1/swap",
+        open_order_api_url: str="https://api.jup.ag/limit/v2/createOrder",
+        cancel_orders_api_url: str="https://api.jup.ag/limit/v2/cancelOrders",
+        query_open_orders_api_url: str="https://api.jup.ag/limit/v2/openOrders?wallet=",
+        query_order_history_api_url: str="https://api.jup.ag/limit/v2/orderHistory",
+        query_trade_history_api_url: str="https://api.jup.ag/limit/v2/tradeHistory",
     ):
         self.dca = JupiterDCA(async_client, keypair)
         self.rpc = async_client
@@ -684,33 +696,50 @@ class Jupiter():
         platform_fee_bps: int = None,
         restrict_intermediate_tokens: bool = False
     ) -> dict:
-        """Get the best swap route for a token trade pair sorted by largest output token amount.
+        """Get the best swap route for a token trade pair sorted by largest output token amount from https://quote-api.jup.ag/v6/quote
         
         Args:
             Required:
-                input_mint (str): Input token mint address
-                output_mint (str): Output token mint address
-                amount (int): The API takes in amount in integer and you have to factor in the decimals for each token
-            Optional:
-                slippage_bps (int): The slippage % in BPS. If the output token amount exceeds the slippage then the swap transaction will fail
-                swap_mode (str): (ExactIn or ExactOut) Defaults to ExactIn
-                only_direct_routes (bool): Default is False. Limits routing to single hop routes only
-                as_legacy_transaction (bool): Default is False. Use legacy transaction format
-                exclude_dexes (list): Default None. List of DEX names to exclude e.g. ['Aldrin','Saber']
-                max_accounts (int): Find a route given a maximum number of accounts involved
-                platform_fee_bps (int): Platform fee in basis points
-                restrict_intermediate_tokens (bool): Restrict intermediate tokens to stable tokens
+                ``input_mint (str)``: Input token mint address\n
+                ``output_mint (str)``: Output token mint address\n
+                ``amount (int)``: The API takes in amount in integer and you have to factor in the decimals for each token by looking up the decimals for that token. For example, USDC has 6 decimals and 1 USDC is 1000000 in integer when passing it in into the API.\n
+            Optionals:
+                ``slippage_bps (int)``: The slippage % in BPS. If the output token amount exceeds the slippage then the swap transaction will fail.\n
+                ``swap_mode (str)``: (ExactIn or ExactOut) Defaults to ExactIn. ExactOut is for supporting use cases where you need an exact token amount, like payments. In this case the slippage is on the input token.\n
+                ``only_direct_routes (bool)``: Default is False. Direct Routes limits Jupiter routing to single hop routes only.\n
+                ``as_legacy_transaction (bool)``: Default is False. Instead of using versioned transaction, this will use the legacy transaction.\n
+                ``exclude_dexes (list)``: Default is that all DEXes are included. You can pass in the DEXes that you want to exclude in a list. For example, ['Aldrin','Saber'].\n
+                ``max_accounts (int)``: Find a route given a maximum number of accounts involved, this might dangerously limit routing ending up giving a bad price. The max is an estimation and not the exact count.\n
+                ``platform_fee_bps (int)``: If you want to charge the user a fee, you can specify the fee in BPS. Fee % is taken out of the output token.
         
         Returns:
-            dict: Best swap route response
+            ``dict``: returns best swap route
             
         Example:
-            >>> quote = await jupiter.quote(
-            >>>     input_mint="So11111111111111111111111111111111111111112",
-            >>>     output_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 
-            >>>     amount=5_000_000
-            >>> )
+            >>> rpc_url = "https://neat-hidden-sanctuary.solana-mainnet.discover.quiknode.pro/2af5315d336f9ae920028bbb90a73b724dc1bbed/"
+            >>> async_client = AsyncClient(rpc_url)
+            >>> private_key_string = "tSg8j3pWQyx3TC2fpN9Ud1bS0NoAK0Pa3TC2fpNd1bS0NoASg83TC2fpN9Ud1bS0NoAK0P"
+            >>> private_key = Keypair.from_bytes(base58.b58decode(private_key_string))
+            >>> jupiter = Jupiter(async_client, private_key)
+            >>> input_mint = "So11111111111111111111111111111111111111112"
+            >>> output_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            >>> amount = 5_000_000
+            >>> quote = await jupiter.quote(input_mint, output_mint, amount)
+            {
+                'inputMint': 'So11111111111111111111111111111111111111112',
+                'inAmount': '5000000',
+                'outputMint': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                'outAmount': '353237',
+                'otherAmountThreshold':'351471',
+                'swapMode': 'ExactIn',
+                'slippageBps': 50,
+                'platformFee': None,
+                'priceImpactPct': '0',
+                'routePlan': [{'swapInfo': {'ammKey': 'Cx8eWxJAaCQAFVmv1mP7B2cVie2BnkR7opP8vUh23Wcr', 'label': 'Lifinity V2', 'inputMint': 'So11111111111111111111111111111111111111112', 'outputMint': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'inAmount': '5000000', 'outAmount': '353237', 'feeAmount': '1000', 'feeMint': 'So11111111111111111111111111111111111111112'}, 'percent': 100}],
+                'contextSlot': 236625263,
+                'timeTaken': 0.069434356}
         """
+        
         # Build base URL with required parameters
         quote_url = (
             f"{self.ENDPOINT_APIS_URL['QUOTE']}"
@@ -782,37 +811,34 @@ class Jupiter():
         
         Args:
             Required:
-                input_mint (str): Input token mint address
-                output_mint (str): Output token mint address
-                amount (int): Amount in lamports/raw units
-            Optional:
-                quote_response (dict): Response from quote API call
-                wrap_unwrap_sol (bool): Auto wrap and unwrap SOL, default True
-                slippage_bps (int): Slippage in basis points
-                swap_mode (str): ExactIn or ExactOut, default ExactIn
-                prioritization_fee_lamports (dict): Priority fee config:
-                    {'priorityLevel': str, 'maxLamports': int} or {'jitoTipLamports': int}
-                only_direct_routes (bool): Only use single hop routes
-                as_legacy_transaction (bool): Use legacy transaction format
-                exclude_dexes (list): List of DEX names to exclude
-                max_accounts (int): Maximum accounts to use
-                platform_fee_bps (int): Platform fee in basis points 
-                use_shared_accounts (bool): Use shared program accounts
-                destination_token_account (str): Custom destination token account
-                use_token_ledger (bool): Use token ledger for input amount
-                dynamic_compute_unit_limit (bool): Dynamic compute unit calculation
-                skip_preflight (bool): Skip preflight transaction check
+                ``input_mint (str)``: Input token mint str\n
+                ``output_mint (str)``: Output token mint str\n
+                ``amount (int)``: The API takes in amount in integer and you have to factor in the decimals for each token by looking up the decimals for that token. For example, USDC has 6 decimals and 1 USDC is 1000000 in integer when passing it in into the API.\n
+            Optionals:
+                ``prioritizationFeeLamports (int)``: If transactions are expiring without confirmation on-chain, this might mean that you have to pay additional fees to prioritize your transaction. To do so, you can set the prioritizationFeeLamports parameter.\n
+                ``wrap_unwrap_sol (bool)``: Auto wrap and unwrap SOL. Default is True.\n
+                ``slippage_bps (int)``: The slippage % in BPS. If the output token amount exceeds the slippage then the swap transaction will fail.\n
+                ``swap_mode (str)``: (ExactIn or ExactOut) Defaults to ExactIn. ExactOut is for supporting use cases where you need an exact token amount, like payments. In this case the slippage is on the input token.\n
+                ``only_direct_routes (bool)``: Default is False. Direct Routes limits Jupiter routing to single hop routes only.\n
+                ``as_legacy_transaction (bool)``: Default is False. Instead of using versioned transaction, this will use the legacy transaction.\n
+                ``exclude_dexes (list)``: Default is that all DEXes are included. You can pass in the DEXes that you want to exclude in a list. For example, ['Aldrin','Saber'].\n
+                ``max_accounts (int)``: Find a route given a maximum number of accounts involved, this might dangerously limit routing ending up giving a bad price. The max is an estimation and not the exact count.\n
+                ``platform_fee_bps (int)``: If you want to charge the user a fee, you can specify the fee in BPS. Fee % is taken out of the output token.
         
         Returns:
-            str: Base64 encoded serialized transaction
+            ``str``: returns serialized transactions to perform the swap from https://quote-api.jup.ag/v6/swap
             
         Example:
-            >>> tx = await jupiter.swap(
-            >>>     input_mint="So11111111111111111111111111111111111111112",
-            >>>     output_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            >>>     amount=1_000_000,
-            >>>     slippage_bps=50
-            >>> )
+            >>> rpc_url = "https://neat-hidden-sanctuary.solana-mainnet.discover.quiknode.pro/2af5315d336f9ae920028bbb90a73b724dc1bbed/"
+            >>> async_client = AsyncClient(rpc_url)
+            >>> private_key_string = "tSg8j3pWQyx3TC2fpN9Ud1bS0NoAK0Pa3TC2fpNd1bS0NoASg83TC2fpN9Ud1bS0NoAK0P"
+            >>> private_key = Keypair.from_bytes(base58.b58decode(private_key_string))
+            >>> jupiter = Jupiter(async_client, private_key)
+            >>> input_mint = "So11111111111111111111111111111111111111112"
+            >>> output_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            >>> amount = 5_000_000
+            >>> transaction_data = await jupiter.swap(user_public_key, input_mint, output_mint, amount)
+            AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAJDpQzg6Gwmq0Gtgp4+LWUVz0yQOAuHGNJAGTs0dcqEMVCoh2aSWdVMvcatcojrWtwXATiOw7/o5hE7NFuy3p8vgLfsLhf7Ff9NofcPgIyAbMytm5ggTyKwmR+JqgXUXARVfefILshj4ZhFSjUfRpiSI47mVNFUq9v5NOOCWSEZJZM/GHGfBesEb9blQsf7DnKodziY279S/OPkZf0/OalnPEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAABHnVW/IxwG7udMVuzmgVB/2xst6j9I5RArHNola8E48Gm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAQbd9uHXZaGT2cvhRs7reawctIXtX1s3kTqM9YV+/wCpT0tsDkEI/SpqJHjq4KzFnbIbtO31EcFiz2AtHgwJAfuMlyWPTiSJ8bs9ECkUjg2DC1oTmdr/EIQEjnvY2+n4WbQ/+if11/ZKdMCbHylYed5LCas238ndUUsyGqezjOXoxvp6877brTo9ZfNqq8l0MbG75MLS9uDkfKYCA0UvXWHmraeknnR8/memFAZWZHeDMQG7C5ZFLxolWUniPl6SYgcGAAUCwFwVAAYACQNIDQAAAAAAAAsGAAMACAUJAQEFAgADDAIAAAAgTgAAAAAAAAkBAwERBx8JCgADAQIECA0HBwwHGREBAhUOFxMWDxIQFAoYCQcHJMEgmzNB1pyBBwEAAAATZAABIE4AAAAAAACHBQAAAAAAADIAAAkDAwAAAQkB1rO1s+JVEuIRoGsE8f2MlAkFWssCkimIonlHpLV2w4gKBwKRTE0SjIeLSwIICg==
         """
         if quote_response is None:
             quote_response = await self.quote(
@@ -847,6 +873,7 @@ class Jupiter():
 
         try:
             async with httpx.AsyncClient() as client:
+                logger.info(f"Sending swap request with params: {swap_params}")
                 response = await client.post(
                     self.ENDPOINT_APIS_URL['SWAP'],
                     json=swap_params,
@@ -855,9 +882,13 @@ class Jupiter():
                 response.raise_for_status()
                 
                 swap_response = response.json()
+                logger.info(f"Raw swap response: {swap_response}")
+                
                 if 'swapTransaction' not in swap_response:
+                    logger.error(f"Invalid swap response format: {swap_response}")
                     raise ValueError("Missing swapTransaction in response")
 
+                logger.info(f"Extracted swap transaction of length: {len(swap_response['swapTransaction'])}")
                 return swap_response['swapTransaction']
 
         except httpx.RequestError as e:
@@ -918,7 +949,7 @@ class Jupiter():
             >>> instructions = await jupiter.get_swap_instructions(
             >>>     input_mint="So11111111111111111111111111111111111111112",
             >>>     output_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            >>>     amount=1_000_000
+            >>>     amount=1000  # 1000 = 1 SOL (microlamports)
             >>> )
             >>> # Use with custom transaction building
             >>> transaction = VersionedTransaction(...)
@@ -1064,7 +1095,7 @@ class Jupiter():
             Required:!:
                 ``orders (list)``: List of orders to be cancelled.
         Returns:
-            ``str``: returns serialized transactions to cancel orders from https://jup.ag/api/limit/v1/cancelOrders
+            ``str``: returns serialized transactions to cancel orders from https://api.jup.ag/limit/v2/cancelOrders
         
         Example:
             >>> rpc_url = "https://neat-hidden-sanctuary.solana-mainnet.discover.quiknode.pro/2af5315d336f9ae920028bbb90a73b724dc1bbed/"
@@ -1100,7 +1131,7 @@ class Jupiter():
                 ``input_mint (str)``: Input token mint address.
                 ``output_mint (str)``: Output token mint address.
         Returns:
-            ``list``: returns open orders list from https://jup.ag/api/limit/v1/openOrders
+            ``list``: returns open orders list from https://api.jup.ag/limit/v2/openOrders
             
         Example:
             >>> list_open_orders = await Jupiter.query_open_orders("AyWu89SjZBW1MzkxiREmgtyMKxSkS1zVy8Uo23RyLphX")
@@ -1122,7 +1153,7 @@ class Jupiter():
             ]      
         """
         
-        query_openorders_url = "https://jup.ag/api/limit/v1/openOrders?wallet=" + wallet_address
+        query_openorders_url = "https://api.jup.ag/limit/v2/openOrders?wallet=" + wallet_address
         if input_mint:
             query_openorders_url += "inputMint=" + input_mint
         if output_mint:
@@ -1148,7 +1179,7 @@ class Jupiter():
                 ``skip (int)``: Number of records to skip from the beginning.
                 ``take (int)``: Number of records to retrieve from the current position.
         Returns:
-            ``list``: returns open orders list from https://jup.ag/api/limit/v1/orderHistory
+            ``list``: returns open orders list from https://api.jup.ag/limit/v2/orderHistory
             
         Example:
             >>> list_orders_history = await Jupiter.query_orders_history("AyWu89SjZBW1MzkxiREmgtyMKxSkS1zVy8Uo23RyLphX")
@@ -1173,7 +1204,7 @@ class Jupiter():
             ]
         """
         
-        query_orders_history_url = "https://jup.ag/api/limit/v1/orderHistory" + "?wallet=" + wallet_address
+        query_orders_history_url = "https://api.jup.ag/limit/v2/orderHistory" + "?wallet=" + wallet_address
         if cursor:
             query_orders_history_url += "?cursor=" + str(cursor)
         if skip:
@@ -1205,7 +1236,7 @@ class Jupiter():
                 ``skip (int)``: Number of records to skip from the beginning.
                 ``take (int)``: Number of records to retrieve from the current position.
         Returns:
-            ``list``: returns trades history list from https://jup.ag/api/limit/v1/tradeHistory
+            ``list``: returns trades history list from https://api.jup.ag/limit/v2/tradeHistory
         
         Example:
             >>> list_trades_history = await Jupiter.query_trades_history("AyWu89SjZBW1MzkxiREmgtyMKxSkS1zVy8Uo23RyLphX")
@@ -1228,7 +1259,7 @@ class Jupiter():
             ]
         """
         
-        query_tradeHistoryUrl = "https://jup.ag/api/limit/v1/tradeHistory" + "?wallet=" + wallet_address
+        query_tradeHistoryUrl = "https://api.jup.ag/limit/v2/tradeHistory" + "?wallet=" + wallet_address
         if input_mint:
             query_tradeHistoryUrl += "inputMint=" + input_mint
         if output_mint:
